@@ -18,7 +18,7 @@ from sklearn.model_selection import cross_val_predict
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("file", "psc_data.csv", "Name of file to read.")
+flags.DEFINE_string("file", "example_data/psc_data.csv", "Name of file to read.")
 flags.DEFINE_string("target", "efficiency", "Name of target value to fit.")
 flags.DEFINE_bool("pairplot", False, "Set this flag to make a pairplot of svd features.")
 flags.DEFINE_integer("n_dim", 5, "Number of dimensions of the truncated svd.")
@@ -28,7 +28,7 @@ flags.DEFINE_integer('tick_size', 16, 'font size to use in labels')
 
 def main(argv):
     #print("Target: ", FLAGS.target)
-    df = pd.read_csv("psc_data.csv", index_col=0)
+    df = pd.read_csv(FLAGS.file, index_col=0)
     #print(df.describe())
     #print(df.keys())
     #print(df[FLAGS.target].describe())
