@@ -3,13 +3,13 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 import numpy as np
 
-def get_compositions_vector_column(df: pd.DataFrame) -> pd.Series:
+def get_compositions_vector_column(formula_series: pd.Series) -> pd.Series:
     """Return a pd.Series with composition vectors computed from df.
     
     df needs to have a column 'chemical_formula_hill'. """
     symbols_all = set()
     # get set of all elements in the dataset
-    for formula_hill in df['chemical_formula_hill']:
+    for formula_hill in formula_series:
         if not isinstance(formula_hill, str):
             continue
         formula_dict = Formula(formula_hill).count()
@@ -18,9 +18,8 @@ def get_compositions_vector_column(df: pd.DataFrame) -> pd.Series:
 
     compositions = []
     indices = []
-    for index, row in df.iterrows():
+    for index, formula_hill in enumerate(formula_series):
         indices.append(index)
-        formula_hill = row['chemical_formula_hill']
         if not isinstance(formula_hill, str):
             compositions.append(np.zeros(len(symbols_all_zero_dict)))
             continue
