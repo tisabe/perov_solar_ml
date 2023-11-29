@@ -1,9 +1,12 @@
 """WARNING: copied from documentation for scikit-learn 1.0.2"""
 import time
 import warnings
+from collections import defaultdict
 
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 
 from sklearn import cluster, datasets, mixture
 from sklearn.neighbors import kneighbors_graph
@@ -91,17 +94,32 @@ datasets = [
         },
     ),
     (blobs, {}),
-    (no_structure, {}),
+    #(no_structure, {}),
 ]
+names_datasets = [
+    "noisy circles",
+    "noisy moons",
+    "varied",
+    "aniso",
+    "blobs",
+    "no structure"
+]
+metrics = {
+    "rand_score": metrics.adjusted_rand_score,
+    "mutual_info": metrics.adjusted_mutual_info_score,
+    "homogeneity": metrics.homogeneity_score,
+    "completeness": metrics.completeness_score,
+    #"silhouette": metrics.silhouette_score
+}
+scores = defaultdict(list)
 
 for i_dataset, (dataset, algo_params) in enumerate(datasets):
-    print("Dataset ", i_dataset)
+    print(names_datasets[i_dataset])
     # update parameters with dataset-specific values
     params = default_base.copy()
     params.update(algo_params)
 
     X, y = dataset
-    print(y.shape)
 
     # normalize dataset for easier parameter selection
     X = StandardScaler().fit_transform(X)
@@ -163,7 +181,6 @@ for i_dataset, (dataset, algo_params) in enumerate(datasets):
     )
 
     for name, algorithm in clustering_algorithms:
-        print(name)
         t0 = time.time()
 
         # catch warnings related to kneighbors_graph
@@ -190,10 +207,15 @@ for i_dataset, (dataset, algo_params) in enumerate(datasets):
             y_pred = algorithm.predict(X)
 
         # calculate clustering performance evaluation
-        score_adj_rand = metrics.adjusted_rand_score(y_pred, y)
-        score_ami = metrics.adjusted_mutual_info_score(y_pred, y)
-        print(score_adj_rand)
-        print(score_ami)
+        for score_name, fun_score in metrics.items():
+            if score_name == "silhouette":
+                score = fun_score(X, y_pred, metric='euclidean')
+            else:
+                score = fun_score(y, y_pred)
+            scores["score"].append(score)
+            scores["score_name"].append(score_name)
+            scores["dataset"].append(names_datasets[i_dataset])
+            scores["method"].append(name)
 
         plt.subplot(len(datasets), len(clustering_algorithms), plot_num)
         if i_dataset == 0:
@@ -236,5 +258,10 @@ for i_dataset, (dataset, algo_params) in enumerate(datasets):
             horizontalalignment="right",
         )
         plot_num += 1
+df = pd.DataFrame(scores)
+print(df)
 
+plt.show()
+
+sns.barplot(df, x="method", y="score", hue="score_name")
 plt.show()
