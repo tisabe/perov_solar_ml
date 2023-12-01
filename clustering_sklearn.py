@@ -14,6 +14,21 @@ from sklearn.neighbors import kneighbors_graph
 from sklearn.preprocessing import StandardScaler
 from sklearn import metrics
 
+
+def segment_sum(data, segment_ids):
+    data = np.asarray(data)
+    s = np.zeros((np.max(segment_ids)+1,) + data.shape[1:], dtype=data.dtype)
+    np.add.at(s, segment_ids, data)
+    return s
+
+def var_score(targets, cluster_labels):
+    seg_sum = segment_sum(targets, cluster_labels)
+    _, counts = np.unique(cluster_labels, return_counts=True)
+    seg_mean = seg_sum/counts
+    abs_diffs = np.abs(targets - seg_mean[cluster_labels])
+    var = np.square(abs_diffs)
+    return np.mean(var)
+
 np.random.seed(0)
 
 # ============
@@ -127,7 +142,7 @@ metrics = {
     "mutual_info": metrics.adjusted_mutual_info_score,
     "homogeneity": metrics.homogeneity_score,
     "completeness": metrics.completeness_score,
-    #"silhouette": metrics.silhouette_score
+    "silhouette": metrics.silhouette_score,
 }
 scores = defaultdict(list)
 
@@ -242,6 +257,9 @@ for i_dataset, (dataset, algo_params) in enumerate(datasets):
         # calculate clustering performance evaluation
         for score_name, fun_score in metrics.items():
             if score_name == "silhouette":
+                if names_datasets[i_dataset] == "no structure":
+                    # silhouette score cannot be computed with only 1 label
+                    break
                 score = fun_score(X, y_pred, metric='euclidean')
             else:
                 score = fun_score(y, y_pred)
