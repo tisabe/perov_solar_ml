@@ -66,9 +66,11 @@ col_names = ['_'.join(col_name).strip().replace("_mean","").replace("_first","")
 df_agg.columns = col_names
 df_agg = df_agg.dropna(subset=["band_gap", "efficiency"])
 
-targets = df_agg["efficiency"]
-discretizer = KBinsDiscretizer(n_bins=10, encode="ordinal", strategy="uniform")
-targets = discretizer.fit_transform([targets])[0]
+targets = np.reshape(df_agg["efficiency"].to_numpy(), (-1,1))
+print(targets)
+discretizer = KBinsDiscretizer(n_bins=10, encode="ordinal", strategy="quantile")
+targets = discretizer.fit_transform(targets)
+print("Efficiency bins: ", discretizer.bin_edges_)
 
 enc = OneHotEncoder(sparse_output=True#, min_frequency=100,
     )
@@ -95,18 +97,18 @@ plot_num = 1
 
 seed = 42
 
-n_components = 10
+n_components = 2
 pca = PCA(n_components=n_components)
 svd = TruncatedSVD(n_components=n_components)
 mds = MDS(n_components=n_components)
 dim_reductions = (
-    ("identity", None),
+    #("identity", None),
     ("pca", pca),
     ("svd", svd),
     ("mds", mds)
 )
 
-n_clusters = 20
+n_clusters = 10
 allow_single_cluster = True
 min_samples = 10
 min_cluster_size = 10
@@ -123,7 +125,7 @@ metrics = {
 }
 scores = defaultdict(list)
 
-X, y = features_concat, targets
+X, y = features_concat, np.reshape(targets, (-1,))
 
 for i_reduction, (name_reduction, fun_reduction) in enumerate(dim_reductions):
     print(name_reduction)
@@ -132,7 +134,9 @@ for i_reduction, (name_reduction, fun_reduction) in enumerate(dim_reductions):
         X_tr = X
     else:
         X_tr = fun_reduction.fit_transform(X)
-    # TODO: save dimensional reduced data
+        for dim_i in range(n_components):
+            df_agg[name_reduction+"_"+str(dim_i)] = X_tr[:, dim_i]
+    print("Shape of transformed data: ", X_tr.shape)
 
     # connectivity matrix for structured Ward
     connectivity = kneighbors_graph(
@@ -244,8 +248,6 @@ for i_reduction, (name_reduction, fun_reduction) in enumerate(dim_reductions):
         colors = np.append(colors, ["#000000"])
         plt.scatter(X[:, 0], X[:, 1], s=10, color=colors[y_pred])
 
-        plt.xlim(-2.5, 2.5)
-        plt.ylim(-2.5, 2.5)
         plt.xticks(())
         plt.yticks(())
         plt.text(
@@ -259,7 +261,7 @@ for i_reduction, (name_reduction, fun_reduction) in enumerate(dim_reductions):
         plot_num += 1
 df = pd.DataFrame(scores)
 print(df)
-# TODO: save dataframe
+df_agg.to_csv("data/psc_cluster.csv")
 
 plt.show()
 

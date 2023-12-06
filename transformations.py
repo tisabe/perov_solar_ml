@@ -4,7 +4,7 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 import numpy as np
 
 def get_compositions_vector_column(formula_series: pd.Series) -> pd.Series:
-    """Return a pd.Series with composition vectors computed from df.
+    """Return a np.array with composition vectors computed from df.
     
     df needs to have a column 'chemical_formula_hill'. """
     symbols_all = set()
