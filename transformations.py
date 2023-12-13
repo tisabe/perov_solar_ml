@@ -1,7 +1,48 @@
+from typing import List
+
 from ase.formula import Formula
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 import numpy as np
+
+
+class StackEncoder:
+    """Encodes the device stacks by splitting the stack string and
+    one-hot-encoding individual layers."""
+    def __init__(self):
+        self.enc = OneHotEncoder(sparse_output=False)
+
+    def fit(self, stack_list: List[str]):
+        stack_list = [trim_stack_string(stack) for stack in stack_list]
+        flattened = np.concatenate(list(stack_list)).reshape(-1, 1)
+        self.enc.fit(flattened)
+
+    def transform(self, stack_list):
+        #out = np.zeros((len(stack_list, len(self.enc.categories_[0]))))
+        n_categories = len(self.enc.categories_[0])
+        stacks_tr_list = []
+        for i, stack in enumerate(stack_list):
+            stack = trim_stack_string(stack)
+            if len(stack)==0:
+                stacks_tr_list.append(np.zeros((n_categories)))
+            else:
+                stack = np.array(stack).reshape(-1, 1)
+                stack_tr = self.enc.transform(stack)
+                stack_tr = np.sum(stack_tr, axis=0)
+                stacks_tr_list.append(stack_tr)
+        return np.vstack(stacks_tr_list)
+
+
+def trim_stack_string(stack: str):
+    """Return list of strings of different layers in the device stack."""
+    if not isinstance(stack, str):
+        return []
+    stack = stack.strip('"[]"')
+    stack = stack.split(sep=", ")
+    stack = [layer.strip("'") if isinstance(layer, str) else layer for layer in stack]
+    #stack.remove("Perovskite")
+    return stack
+
 
 def get_compositions_vector_column(formula_series: pd.Series) -> pd.Series:
     """Return a np.array with composition vectors computed from df.
