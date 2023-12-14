@@ -9,16 +9,35 @@ import numpy as np
 class StackEncoder:
     """Encodes the device stacks by splitting the stack string and
     one-hot-encoding individual layers."""
-    def __init__(self):
-        self.enc = OneHotEncoder(sparse_output=False)
+    def __init__(self, min_frequency=None):
+        self.enc = OneHotEncoder(
+            sparse_output=False, min_frequency=min_frequency)
+        self.min_frequency = min_frequency
 
     def fit(self, stack_list: List[str]):
         stack_list = [trim_stack_string(stack) for stack in stack_list]
         flattened = np.concatenate(list(stack_list)).reshape(-1, 1)
         self.enc.fit(flattened)
+        if self.min_frequency is not None:
+            self.n_categories = (
+                len(self.enc.categories_[0]) -
+                len(self.enc.infrequent_categories_[0]) + 1)
+        else:
+            self.n_categories = len(self.enc.categories_[0])
 
     def transform(self, stack_list):
-        #out = np.zeros((len(stack_list, len(self.enc.categories_[0]))))
+        """Transform list of device stacks to summed one hot encoding.
+        
+        stack_list = [
+            ['SLG', 'ITO', 'PEDOT:PSS', 'Perovskite', 'PCBM-60', 'Au'],
+            ['SLG', 'FTO', 'TiO2-c', 'TiO2-mp', 'Perovskite', 'Au'],
+            ['SLG', 'ITO', 'SLG', 'Perovskite', 'Au']
+        ] -> np.array([
+            [1 1 1 1 1 1 0 0 0 0...],
+            [1 0 0 1 0 1 1 1 1 0...],
+            [2 1 0 1 0 1 0 0 0 0...]
+        ])
+        """
         n_categories = len(self.enc.categories_[0])
         stacks_tr_list = []
         for i, stack in enumerate(stack_list):
@@ -31,6 +50,29 @@ class StackEncoder:
                 stack_tr = np.sum(stack_tr, axis=0)
                 stacks_tr_list.append(stack_tr)
         return np.vstack(stacks_tr_list)
+
+    def inverse_transform(self, stacks_tr: np.array):
+        """Transform list of summed one hot encoded device stack back to list
+        of device stacks. Note: stack layers will not be in the same order,
+        as before the original transform due to the summation.
+        
+        For an example, see transform (but inverse).
+        """
+        stack_list = []
+        for stack_tr in stacks_tr:
+            stack = []
+            for idx, count in enumerate(stack_tr):
+                count = int(count)
+                if count > 0:
+                    one_hot = np.zeros(self.n_categories)
+                    one_hot[idx] = 1
+                    layer = self.enc.inverse_transform(one_hot.reshape(1, -1))
+                    for _ in range(count):
+                        stack.append(layer[0, 0])
+            stack_list.append(stack)
+        return stack_list
+
+
 
 
 def trim_stack_string(stack: str):
