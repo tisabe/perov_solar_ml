@@ -51,6 +51,11 @@ class StackEncoder:
                 stacks_tr_list.append(stack_tr)
         return np.vstack(stacks_tr_list)
 
+    def fit_transform(self, stack_list):
+        """Fit and transform a list of device stacks, see fit and transform."""
+        self.fit(stack_list)
+        return self.transform(stack_list)
+
     def inverse_transform(self, stacks_tr: np.array):
         """Transform list of summed one hot encoded device stack back to list
         of device stacks. Note: stack layers will not be in the same order,

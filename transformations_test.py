@@ -62,6 +62,14 @@ class UnitTest(unittest.TestCase):
             stack = trim_stack_string(stack)
             self.assertEqual(set(stack), set(stack_inverse))
 
+        # test the fit_transform function
+        enc = StackEncoder(min_frequency=None)
+        stacks_tr = enc.fit_transform(stacks)
+        stacks_inverse = enc.inverse_transform(stacks_tr)
+        for stack, stack_inverse in zip(stacks, stacks_inverse):
+            stack = trim_stack_string(stack)
+            self.assertEqual(set(stack), set(stack_inverse))
+
     def test_StackEncoder_min_frequency(self):
         """Test the min_frequency parameter of the StackEncoder."""
         enc = StackEncoder(min_frequency=2)

@@ -1,5 +1,5 @@
-"""Do dimensional reduction and (un-)supervised learning using singular value
-decomposition (SVD)."""
+"""Compute similarities between psc vectors and statistics of nearest neighbor
+graph."""
 
 from absl import app
 from absl import flags
@@ -17,9 +17,6 @@ from transformations import get_compositions_vector_column
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("file", "example_data/psc_data.csv", "Name of file to read.")
-flags.DEFINE_string("target", "efficiency", "Name of target value to fit.")
-flags.DEFINE_bool("pairplot", False, "Set this flag to make a pairplot of svd features.")
-flags.DEFINE_integer("n_dim", 5, "Number of dimensions of the truncated svd.")
 flags.DEFINE_integer('font_size', 18, 'font size to use in labels')
 flags.DEFINE_integer('tick_size', 16, 'font size to use in labels')
 
