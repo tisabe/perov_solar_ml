@@ -63,70 +63,113 @@ class CompositionEncoder:
 
 class DFEncoder:
     def __init__(self,
-        cols_target,
+        target,
         cols_category,
-        cols_composition
+        cols_composition_dict
     ):
-        self.cols_target = cols_target
+        self.target = target
         self.cols_category = cols_category
-        self.cols_composition = cols_composition
+        self.cols_composition_dict = cols_composition_dict
         self.features = []
-        agg_dict = {
-            **{col: ["mean", "std"] for col in cols_target},
+        self.agg_dict = {
+            target: ["mean", "std"],
             **{col: "first" for col in cols_category},
-            **{col: "first" for col in cols_composition}}
-        self.cols_in = self.cols_category + self.cols_composition
+            **{col: "first" for col in cols_composition_dict.keys()},
+            **{col: "first" for col in cols_composition_dict.values()}}
+        self.cols_in = self.cols_category \
+            + list(self.cols_composition_dict.keys()) \
+            + list(self.cols_composition_dict.values()) #+ self.cols_target
         self.ions_list = None
     
     def fit(self, df):
-        grouped = df.groupby(self.cols_in, as_index=False)
-        df_fit = grouped.agg(agg_dict)
+        """Fit the encoder to the data in df using the columns with which the
+        encoder was initialized. NOTE: using fit and transform on this encoder
+        does not make use of cross fitting from TargetEncoder.fit_transform
+        which can lead to overfitting."""
+        grouped = df.groupby(self.cols_in, as_index=False, dropna=False)
+        df_fit = grouped.agg(self.agg_dict)
         col_names = ['_'.join(col_name).strip().replace("_mean","").replace("_first","") \
             for col_name in df_fit.columns.values]
         df_fit.columns = col_names
         # drop rows that have no target value, even after aggregation
-        df_fit = df_fit.dropna(subset=self.cols_target)
+        df_fit = df_fit.dropna(subset=self.target)
 
         # encode compositions
-        self.ions_list = [] # to collect the observed ion names
-        self.enc_comp_a = CompositionEncoder()
-        self.enc_comp_a.fit(
-            df_fit["Perovskite_composition_a_ions"].to_list())
-        ions_list += [ion+"_a_site_coefficient" \
-            for ion in self.enc_comp_a.ions_unique]
+        self.ions_lists = {} # to collect the observed ion names
+        self.ion_encoders = {} # to collect the composition encoders
+        for comp_ion_col in self.cols_composition_dict.keys():
+            enc = CompositionEncoder()
+            enc.fit(df_fit[comp_ion_col].to_list())
+            self.ion_encoders[comp_ion_col] = enc # save the encoder in dict
+            self.ions_lists[comp_ion_col] = [ion+"_a_site_coefficient" \
+                for ion in enc.ions_unique]
 
-        self.enc_comp_b = CompositionEncoder()
-        self.enc_comp_b.fit(
-            df_fit["Perovskite_composition_b_ions"].to_list())
-        self.ions_list += [ion+"_b_site_coefficient" \
-            for ion in self.enc_comp_b.ions_unique]
-
-        self.enc_comp_c = CompositionEncoder()
-        self.enc_comp_c.fit(
-            df_fit["Perovskite_composition_c_ions"].to_list())
-        self.ions_list += [ion+"_c_site_coefficient" \
-            for ion in self.enc_comp_c.ions_unique]
-
-        self.enc_target = TargetEncoder(smooth="auto")
+        self.enc_target = TargetEncoder(
+            smooth="auto", target_type="continuous")
+        # TODO: add support for binary targets
         X = df_fit[self.cols_category]
-        y = df_fit[self.cols_target]
-        enc.fit(X, y)
+        y = df_fit[self.target]
+        self.enc_target.fit(X, y)
 
     def transform(self, df):
-        comp_a = self.enc_comp_a.transform(
-            df["Perovskite_composition_a_ions"],
-            df["Perovskite_composition_a_ions_coefficients"])
-        comp_b = self.enc_comp_b.transform(
-            df["Perovskite_composition_b_ions"],
-            df["Perovskite_composition_b_ions_coefficients"])
-        comp_c = self.enc_comp_c.transform(
-            df["Perovskite_composition_c_ions"],
-            df["Perovskite_composition_c_ions_coefficients"])
-        comp_all = np.concatenate((comp_a, comp_b, comp_c), axis=1)
+        grouped = df.groupby(self.cols_in, as_index=False, dropna=False)
+        df_fit = grouped.agg(self.agg_dict)
+        col_names = ['_'.join(col_name).strip().replace("_mean","").replace("_first","") \
+            for col_name in df_fit.columns.values]
+        df_fit.columns = col_names
+        # drop rows that have no target value, even after aggregation
+        df_fit = df_fit.dropna(subset=self.target)
 
-        X = df[self.cols_in]
-        y = df[self.cols_target]
-        X_trans = enc.fit_transform(X, y)
+        comps = []
+        for ion_name_col, ion_ratio_col in self.cols_composition_dict.items():
+            comp = self.ion_encoders[ion_name_col].transform(
+                df_fit[ion_name_col], df_fit[ion_ratio_col])
+            comps.append(comp)
+        comp_all = np.concatenate(comps, axis=1)
+
+        X = df_fit[self.cols_category]
+        X_trans = self.enc_target.transform(X)
         X_combined = np.concatenate((X_trans, comp_all), axis=1)
 
-        return X_combined, y
+        return X_combined
+
+    def fit_transform(self, df):
+        """Fit the encoder using data in df, and return transformed datapoints.
+        
+        This uses the cross fitting of TargetEncoder, so overfitting the
+        encoding is avoided."""
+        grouped = df.groupby(self.cols_in, as_index=False, dropna=False)
+        df_fit = grouped.agg(self.agg_dict)
+        col_names = ['_'.join(col_name).strip().replace("_mean","").replace("_first","") \
+            for col_name in df_fit.columns.values]
+        df_fit.columns = col_names
+        # drop rows that have no target value, even after aggregation
+        df_fit = df_fit.dropna(subset=self.target)
+
+        # encode compositions
+        self.ions_lists = {} # to collect the observed ion names
+        self.ion_encoders = {} # to collect the composition encoders
+        for comp_ion_col in self.cols_composition_dict.keys():
+            enc = CompositionEncoder()
+            enc.fit(df_fit[comp_ion_col].to_list())
+            self.ion_encoders[comp_ion_col] = enc # save the encoder in dict
+            self.ions_lists[comp_ion_col] = [ion+"_a_site_coefficient" \
+                for ion in enc.ions_unique]
+
+        self.enc_target = TargetEncoder(
+            smooth="auto", target_type="continuous")
+        # TODO: add support for binary targets
+        X = df_fit[self.cols_category]
+        y = df_fit[self.target]
+        X_trans = self.enc_target.fit_transform(X, y)
+
+        comps = []
+        for ion_name_col, ion_ratio_col in self.cols_composition_dict.items():
+            comp = self.ion_encoders[ion_name_col].transform(
+                df_fit[ion_name_col], df_fit[ion_ratio_col])
+            comps.append(comp)
+        comp_all = np.concatenate(comps, axis=1)
+
+        X_combined = np.concatenate((X_trans, comp_all), axis=1)
+
+        return X_combined
