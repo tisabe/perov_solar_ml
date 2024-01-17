@@ -6,6 +6,9 @@ from absl import flags
 import numpy as np
 import pandas as pd
 import pygad
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import GridSearchCV, KFold, cross_validate, GroupKFold
+from sklearn.model_selection import cross_val_predict
 
 from dataframe_encoder import (
     DFEncoder,
@@ -20,7 +23,7 @@ flags.DEFINE_string(
 
 
 def main(argv):
-    df = pd.read_csv(FLAGS.file, index_col=0)
+    df = pd.read_csv(FLAGS.file, index_col=0, low_memory=False)
     # define the columns we want to use
     # columns with lists of categories
     cols_cat_list = [
@@ -98,7 +101,7 @@ def main(argv):
     df_fit.columns = col_names
 
     df_fit = df_fit.dropna(subset=target)
-    print(df_fit.shape)
+    print("Data shape after aggregation: ", df_fit.shape)
     composition_dict = {
         "Perovskite_composition_a_ions": "Perovskite_composition_a_ions_coefficients",
         "Perovskite_composition_b_ions": "Perovskite_composition_b_ions_coefficients",
@@ -110,8 +113,28 @@ def main(argv):
         composition_dict
     )
     df_out = encoder.fit_transform(df_fit, append=False)
-    print(df_out.shape)
+    print("Data shape after encoding: ", df_out.shape)
+    #print(df_out.columns.values)
 
+    cols_composition_new = [col for col in df_out.columns.values \
+        if "Perovskite_composition_" in col]
+    #print(cols_composition_new)
+
+    regr = RandomForestRegressor(
+        max_depth=100, random_state=0, max_features='sqrt', oob_score=True)
+    X_combined = df_out.to_numpy()
+    y = df_fit[target].to_numpy()
+    cv = KFold(n_splits=5)
+    scores = cross_validate(regr, X=X_combined, y=y, cv=cv,
+        scoring=['r2', 'neg_mean_absolute_error'], n_jobs=-1,
+        return_estimator=True, error_score='raise')
+    print("Scoring attributes: ", scores.keys())
+    print("r^2: ", scores['test_r2'])
+    print("MAE: ", -1*scores['test_neg_mean_absolute_error'])
+    print("Average standard deviation of the target: ",
+        df_fit[target+"_std"].mean())
+
+    y_pred = cross_val_predict(regr, X=X_combined, y=y, cv=cv)
 
 if __name__ == '__main__':
     app.run(main)

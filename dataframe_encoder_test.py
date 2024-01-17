@@ -51,7 +51,7 @@ class UnitTest(unittest.TestCase):
         ]
         enc = CompositionEncoder()
         enc.fit(ions_stack_strings)
-        compositions = enc.transform(ions_stack_strings, ions_stack_ratios)
+        df_compositions = enc.transform(ions_stack_strings, ions_stack_ratios)
         compositions_expected = np.array([
             [0.8, 0.1, 0.1],
             [0.5, 0.1, 0.4],
@@ -60,8 +60,12 @@ class UnitTest(unittest.TestCase):
             [np.nan]*3,
             [np.nan]*3
         ])
-        np.testing.assert_array_equal(compositions, compositions_expected)
-    
+        df_compositions_expected = pd.DataFrame(
+            compositions_expected, columns=["a", "b", "c"]
+        )
+        pd.testing.assert_frame_equal(
+            df_compositions, df_compositions_expected)
+
     def test_dfencoder_fit_and_transform(self):
         cols_target = "target"
         cols_category = ["cat0", "cat1"]

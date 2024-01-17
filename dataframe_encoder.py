@@ -58,8 +58,10 @@ class CompositionEncoder:
                 composition[index] += ratio
             composition /= np.sum(composition)
             compositions.append(composition)
+        df_composition = pd.DataFrame(
+            np.vstack(compositions), columns=self.ions_unique)
 
-        return np.vstack(compositions)
+        return df_composition
 
 
 def aggregate_duplicate_rows(df, cols_aggregate, cols_mean, dropna=False):
@@ -155,14 +157,6 @@ class DFEncoder:
         encoder was initialized. NOTE: using fit and transform on this encoder
         does not make use of cross fitting from TargetEncoder.fit_transform
         which can lead to overfitting."""
-        '''grouped = df_fit.groupby(self.cols_in, as_index=False, dropna=False)
-        df_fit = grouped.agg(self.agg_dict)
-        col_names = ['_'.join(col_name).strip().replace("_mean","").replace("_first","") \
-            for col_name in df_fit.columns.values]
-        df_fit.columns = col_names'''
-        # drop rows that have no target value, even after aggregation
-        #df_fit = df_fit.dropna(subset=self.target)
-
         # encode compositions
         self.ions_lists = {} # to collect the observed ion names
         self.ion_encoders = {} # to collect the composition encoders
@@ -187,21 +181,13 @@ class DFEncoder:
             df_out = df_in.copy()
         else:
             df_out = pd.DataFrame({})
-        # TODO (IMPORTANT): get rid of aggregation, this should only be
-        # necesssary in fitting
-        '''grouped = df_in.groupby(self.cols_in, as_index=False, dropna=False)
-        df_out = grouped.agg(self.agg_dict)
-        col_names = ['_'.join(col_name).strip().replace("_mean","").replace("_first","") \
-            for col_name in df_out.columns.values]
-        df_out.columns = col_names'''
-        # drop rows that have no target value, even after aggregation
-        #df_out = df_out.dropna(subset=self.target)
         for ion_name_col, ion_ratio_col in self.cols_composition_dict.items():
             comp = self.ion_encoders[ion_name_col].transform(
                 df_in[ion_name_col], df_in[ion_ratio_col])
-            for i, ion in enumerate(
-                    self.ion_encoders[ion_name_col].ions_unique):
-                df_out.loc[:, ion_name_col+"_"+ion] = comp[:, i]
+            col_names = list(comp.columns.values)
+            col_names_dict = {name: ion_name_col+"_"+name for name in col_names}
+            comp = comp.rename(columns=col_names_dict)
+            df_out = pd.concat([df_out, comp], axis=1)
 
         X = df_in[self.cols_category]
         X_trans = self.enc_target.transform(X)
@@ -232,9 +218,10 @@ class DFEncoder:
         for ion_name_col, ion_ratio_col in self.cols_composition_dict.items():
             comp = self.ion_encoders[ion_name_col].transform(
                 df_in[ion_name_col], df_in[ion_ratio_col])
-            for i, ion in enumerate(
-                    self.ion_encoders[ion_name_col].ions_unique):
-                df_out.loc[:, ion_name_col+"_"+ion] = comp[:, i]
+            col_names = list(comp.columns.values)
+            col_names_dict = {name: ion_name_col+"_"+name for name in col_names}
+            comp = comp.rename(columns=col_names_dict)
+            df_out = pd.concat([df_out, comp], axis=1)
         # encode categorical variables
         self.enc_target = TargetEncoder(
             smooth="auto", target_type="continuous")
