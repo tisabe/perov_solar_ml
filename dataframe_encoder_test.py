@@ -9,7 +9,9 @@ from dataframe_encoder import (
     trim_ions_string,
     trim_ions_ratio,
     CompositionEncoder,
-    DFEncoder
+    DFEncoder,
+    aggregate_duplicate_rows,
+    get_value_space
 )
 
 
@@ -128,6 +130,62 @@ class UnitTest(unittest.TestCase):
         # there is no duplicate row and one row with a nan value as target 
         # meaning the final number of rows will be one smaller than initially
         self.assertTupleEqual(X.shape, (5, 8))
+
+    def test_aggregate_duplicate_rows(self):
+        df = pd.DataFrame({
+            'id':['a', 'b', 'c', 'd', 'e'],
+            'A': [1, 1, 2, 2, None],
+            'B': [1, 2, 2, 2, 1],
+            'c': [1., 2., 3., 3., 4.]
+        })
+        df_agg = aggregate_duplicate_rows(df, ['A', 'B'], ['c'], dropna=False)
+        # TODO: for some reason the column order changes, find out why
+        df_expected = pd.DataFrame({
+            'c': [1., 2., 3., 4.],
+            'c_std': [None, None, 0., None],
+            'A': [1, 1, 2, None],
+            'B': [1, 2, 2, 1],
+            'id': ['a', 'b', 'c', 'e']})
+        pd.testing.assert_frame_equal(df_agg, df_expected)
+        # test function with dropna=True
+        df = pd.DataFrame({
+            'id':['a', 'b', 'c', 'd', 'e'],
+            'A': [1, 1, 2, 2, None],
+            'B': [1, 2, 2, 2, 1],
+            'c': [1., 2., 3., 3., 4.]
+        })
+        df_agg = aggregate_duplicate_rows(df, ['A', 'B'], ['c'], dropna=True)
+        df_expected = pd.DataFrame({
+            'c': [1., 2., 3.],
+            'c_std': [None, None, 0.],
+            'A': [1., 1., 2.],
+            'B': [1, 2, 2],
+            'id': ['a', 'b', 'c']})
+        pd.testing.assert_frame_equal(df_agg, df_expected)
+
+    def test_get_value_space(self):
+        df = pd.DataFrame({
+            'id':['a', 'b', 'c', 'd', 'e'],
+            'A': [1, 1, 2, 2, None],
+            'B': ['1', '2', '2', '2', '1'],
+            'c': [1., 2., 3., 3., 4.]
+        })
+        cols_type_dict = {'A': 'int', 'B': 'str', 'c': np.float64}
+        value_space = get_value_space(df, cols_type_dict)
+        value_space_expected = [
+            {'low': 1.0, 'high': 2.0, 'step': 1},
+            ['1', '2'],
+            {'low': 1.0, 'high': 4.0}]
+        self.assertListEqual(value_space, value_space_expected)
+        # with dropna=True, drops the fourth row
+        value_space = get_value_space(df, cols_type_dict, dropna=True)
+        value_space_expected = [
+            {'low': 1.0, 'high': 2.0, 'step': 1},
+            ['1', '2'],
+            {'low': 1.0, 'high': 3.0}]
+        self.assertListEqual(value_space, value_space_expected)
+
+
 
 if __name__ == '__main__':
     unittest.main()

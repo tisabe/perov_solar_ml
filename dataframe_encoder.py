@@ -61,6 +61,74 @@ class CompositionEncoder:
         return np.vstack(compositions)
 
 
+def aggregate_duplicate_rows(df, cols_aggregate, cols_mean, dropna=False):
+    """Return a dataframe with aggregated duplicate rows.
+    
+    Rows that all have the same values for columns in cols_aggregate, are
+    aggregated, such that for these columns keep unique combinations of values,
+    and over the columns in cols_mean, the average or mean is taken, as well as
+    the standard deviation. For all other columns in the dataframe, the first
+    entry of the group is taken as the aggregate.
+    
+    NOTE: columns with integer dtypes and missing NaN values are changed to
+    float by pandas. This could be prevented with dtype=pd.Int64Dtype() if need
+    be in the future.
+
+    Example: (also see test for this function)
+    >>> df = pd.DataFrame({
+        ... 'id':['a', 'b', 'c', 'd'],
+        ... 'A': [1, 1, 2, 2],
+        ... 'B': [1, 2, 2, 2],
+        ... 'c': [1., 2., 3., 3.]})
+    >>> aggregate_duplicate_rows(df, ['A', 'B'], ['c'])
+        id  A   B   c   c_std
+    0   a   1   1   1.  None
+    1   b   1   2   2.  None
+    2   c   2   2   3.  0.
+    """
+    cols_all = df.keys().to_list()
+    cols_other = list(set(cols_all) - set(cols_mean))
+    grouped = df.groupby(cols_aggregate, as_index=False, dropna=dropna)
+    agg_dict = {
+        **{col: ["mean", "std"] for col in cols_mean},
+        **{col: "first" for col in cols_aggregate},
+        **{col: "first" for col in cols_other}
+    }
+    df_agg = grouped.agg(agg_dict)
+    col_names = ['_'.join(col_name).strip().replace("_mean","").replace("_first","") \
+        for col_name in df_agg.columns.values]
+    df_agg.columns = col_names
+    return df_agg
+
+
+def get_value_space(df, cols_type_dict, dropna=False):
+    """Return the space of values for columns cols_type_dict in DataFrame df.
+    
+    Returned value is a list of lists and/or dicts, where each list describes
+    the space for a feature coresponding to a column in cols.
+    cols_type_dict is a dict with column names as keys and dtype as values.
+    
+    float columns are turned into minimum and maximum, integer columns are
+    turned into minimum and maximum with stepsize 1, categorical or object
+    columns are turned into a list of the observed values."""
+    if dropna:
+        df = df.dropna(subset=cols_type_dict.keys())
+    value_spaces = []
+    for col, dtype in cols_type_dict.items():
+        counts = df.value_counts(subset=col)
+        if dtype in [np.float64, "float"]:
+            value_space = {"low": min(counts.index), "high": max(counts.index)}
+            value_spaces.append(value_space)
+        if dtype in [np.int64, "int"]:
+            value_space = {
+                "low": min(counts.index), "high": max(counts.index), "step": 1}
+            value_spaces.append(value_space)
+        elif dtype in [np.dtypes.ObjectDType, "str", "category"]:
+            value_space = counts.index.to_list()
+            value_spaces.append(sorted(value_space))
+    return value_spaces
+
+
 class DFEncoder:
     def __init__(self,
         target,
@@ -112,6 +180,8 @@ class DFEncoder:
         self.enc_target.fit(X, y)
 
     def transform(self, df):
+        # TODO (IMPORTANT): get rid of aggregation, this should only be
+        # necesssary in fitting
         grouped = df.groupby(self.cols_in, as_index=False, dropna=False)
         df_fit = grouped.agg(self.agg_dict)
         col_names = ['_'.join(col_name).strip().replace("_mean","").replace("_first","") \
