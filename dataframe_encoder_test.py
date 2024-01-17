@@ -82,19 +82,26 @@ class UnitTest(unittest.TestCase):
             "comp_b_coefficient": ["1 | 0.5; 0.5", "0.5", "1", "1", "1", "1"]
         })
         enc.fit(df)
-        X = enc.transform(df)
-        self.assertTupleEqual(X.shape, (5, 8))
+        df_append = enc.transform(df, append=True)
+        self.assertTupleEqual(df_append.shape, (6, 15))
+        self.assertListEqual(
+            ['target', 'cat0', 'cat1', 'comp_a', 'comp_a_coefficient',
+            'comp_b', 'comp_b_coefficient', 'comp_a_a', 'comp_a_b', 'comp_a_c',
+            'comp_b_a', 'comp_b_b', 'comp_b_c', 'cat0_out', 'cat1_out'],
+            list(df_append.columns.values))
+        
+        df_out = enc.transform(df, append=False)
+        self.assertTupleEqual(df_out.shape, (6, 8))
+        self.assertListEqual(
+            ['comp_a_a', 'comp_a_b', 'comp_a_c', 'comp_b_a', 'comp_b_b',
+            'comp_b_c', 'cat0_out', 'cat1_out'],
+            list(df_out.columns.values))
 
     def test_dfencoder_fit_transform(self):
         cols_target = "target"
         cols_category = ["cat0", "cat1"]
         cols_composition_dict = {
             "comp_a": "comp_a_coefficient", "comp_b": "comp_b_coefficient"}
-        enc = DFEncoder(
-            cols_target,
-            cols_category,
-            cols_composition_dict
-        )
         df = pd.DataFrame({
             "target": [1., 2., 1., 2., 3., 4.],
             "cat0": ["A", "B", "C", "A", "B", "B"],
@@ -104,8 +111,29 @@ class UnitTest(unittest.TestCase):
             "comp_b": ["a | b; c", "a", "a", "a", "a", "a"],
             "comp_b_coefficient": ["1 | 0.5; 0.5", "0.5", "1", "1", "1", "1"]
         })
-        X = enc.fit_transform(df)
-        self.assertTupleEqual(X.shape, (5, 8))
+        enc = DFEncoder(
+            cols_target,
+            cols_category,
+            cols_composition_dict
+        )
+        df_out = enc.fit_transform(df, append=True)
+        self.assertTupleEqual(df_out.shape, (6, 15))
+        self.assertListEqual(
+            ['target', 'cat0', 'cat1', 'comp_a', 'comp_a_coefficient',
+            'comp_b', 'comp_b_coefficient', 'comp_a_a', 'comp_a_b', 'comp_a_c',
+            'comp_b_a', 'comp_b_b', 'comp_b_c', 'cat0_out', 'cat1_out'],
+            list(df_out.columns.values))
+        enc = DFEncoder(
+            cols_target,
+            cols_category,
+            cols_composition_dict
+        )
+        df_out = enc.fit_transform(df, append=False)
+        self.assertTupleEqual(df_out.shape, (6, 8))
+        self.assertListEqual(
+            ['comp_a_a', 'comp_a_b', 'comp_a_c', 'comp_b_a', 'comp_b_b',
+            'comp_b_c', 'cat0_out', 'cat1_out'],
+            list(df_out.columns.values))
 
     def test_dfencoder_nan_vals(self):
         cols_target = "target"
@@ -126,10 +154,12 @@ class UnitTest(unittest.TestCase):
             "comp_b": ["a | b; c", "a", "a", "a", "a", "a"],
             "comp_b_coefficient": ["1 | 0.5; 0.5", "0.5", "1", "1", "1", "1"]
         })
-        X = enc.fit_transform(df)
-        # there is no duplicate row and one row with a nan value as target 
-        # meaning the final number of rows will be one smaller than initially
-        self.assertTupleEqual(X.shape, (5, 8))
+        # NaN target values rase a value error and have to be filtered out
+        with self.assertRaises(ValueError):
+            df_out = enc.fit_transform(df, append=False)
+        df = df.dropna(subset="target")
+        df_out = enc.fit_transform(df, append=False)
+        self.assertTupleEqual(df_out.shape, (5, 8)) # one was deleted
 
     def test_aggregate_duplicate_rows(self):
         df = pd.DataFrame({
