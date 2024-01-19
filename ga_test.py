@@ -7,8 +7,10 @@ import numpy as np
 import pandas as pd
 import pygad
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import GridSearchCV, KFold, cross_validate, GroupKFold
-from sklearn.model_selection import cross_val_predict
+from sklearn.model_selection import GridSearchCV, KFold, cross_val_predict, cross_validate
+from sklearn.preprocessing import TargetEncoder, OrdinalEncoder
+from sklearn.svm import SVR
+import matplotlib.pyplot as plt
 
 from dataframe_encoder import (
     DFEncoder,
@@ -31,7 +33,6 @@ def main(argv):
         "ETL_deposition_procedure",
         "Substrate_stack_sequence",
         "ETL_stack_sequence",
-        "ETL_deposition_procedure",
         "Perovskite_deposition_solvents",
         "HTL_stack_sequence",
         "HTL_deposition_procedure",
@@ -119,9 +120,13 @@ def main(argv):
     cols_composition_new = [col for col in df_out.columns.values \
         if "Perovskite_composition_" in col]
     #print(cols_composition_new)
+    print("Composition cols df shape: ", df_out[cols_composition_new].shape)
+    print("Categorical+Numerical df shape (before encoding): ",
+        df_fit[cols_category+cols_cat_list+cols_num_list+cols_bin].shape)
 
-    regr = RandomForestRegressor(
-        max_depth=100, random_state=0, max_features='sqrt', oob_score=True)
+    regr = RandomForestRegressor(max_depth=100, random_state=0,
+        max_features='sqrt', oob_score=True, n_jobs=-1)
+    #regr = SVR()
     X_combined = df_out.to_numpy()
     y = df_fit[target].to_numpy()
     cv = KFold(n_splits=5)
@@ -135,6 +140,90 @@ def main(argv):
         df_fit[target+"_std"].mean())
 
     y_pred = cross_val_predict(regr, X=X_combined, y=y, cv=cv)
+
+    # collect the types of different columns to get the gene space
+    cols_type_dict_categories = {
+        **{col: "int" for col in cols_category},
+        **{col: "int" for col in cols_cat_list},
+        **{col: "int" for col in cols_num_list},
+        **{col: "int" for col in cols_bin},
+    }
+    enc_ordinal = OrdinalEncoder()
+    X_ordinal = enc_ordinal.fit_transform(
+        df_fit[cols_type_dict_categories.keys()])
+    #print(enc_ordinal.feature_names_in_, len(enc_ordinal.feature_names_in_))
+    df_ordinal_cat = pd.DataFrame(
+        X_ordinal, columns=list(cols_type_dict_categories.keys()))
+    value_space_cat = get_value_space(df_ordinal_cat, cols_type_dict_categories)
+    cols_type_dict_nums = {
+        #**{col: "float" for col in cols_num},
+        **{col: "float" for col in cols_composition_new}}
+    value_space_num = get_value_space(df_out, cols_type_dict_nums)
+    value_space = value_space_cat+value_space_num
+
+    enc_cat = encoder.enc_target
+    num_cat_cols = len(cols_type_dict_categories.keys())
+
+    def fitness_func_batch(ga, solution, solution_idx):
+        # decompose the solution into composition part and categorical part
+        solution_str = enc_ordinal.inverse_transform(
+            solution[:, :num_cat_cols])
+        solution_str_df = pd.DataFrame(
+            solution_str, columns=cols_type_dict_categories.keys())
+        categorical_vec = enc_cat.transform(solution_str_df)
+        composition_vec = solution[:, num_cat_cols:]
+
+        rf_input = np.concatenate(
+            (categorical_vec, composition_vec), axis=1)
+        # we get k predictions as we used k-fold cross validation earlier
+        y_preds = [estimator.predict(rf_input) for estimator in scores['estimator']]
+        #y_preds = cross_val_predict(regr, X=rf_input, cv=cv)
+        return np.mean(np.vstack(y_preds), axis=0)
+
+    def fitness_func_multiobjective(ga, solution, solution_idx):
+        # decompose the solution into composition part and categorical part
+        solution_str = enc_ordinal.inverse_transform(
+            [solution[:num_cat_cols]])
+        solution_str_df = pd.DataFrame(
+            solution_str, columns=cols_type_dict_categories.keys())
+        categorical_vec = enc_cat.transform(solution_str_df)
+        composition_vec = solution[num_cat_cols:]
+
+        rf_input = np.concatenate(
+            (categorical_vec[0], composition_vec), axis=0)
+        # we get k predictions as we used k-fold cross validation earlier
+        y_preds = [estimator.predict([rf_input]) for estimator in scores['estimator']]
+        comp_norm = np.linalg.norm(composition_vec, ord=0)
+        #comp_fitness = 1/(comp_norm + 0.000001)
+        comp_fitness = -comp_norm
+        return (np.mean(y_preds), comp_fitness)
+
+    ga_instance = pygad.GA(
+        num_generations=1000,
+        num_parents_mating=20,
+        mutation_by_replacement=True,
+        fitness_func=fitness_func_multiobjective,
+        fitness_batch_size=None,
+        sol_per_pop=50,
+        num_genes=len(value_space),
+        gene_space=value_space,
+        parent_selection_type='nsga2'
+    )
+    ga_instance.run()
+    solution, solution_fitness, solution_idx = ga_instance.best_solution()
+    print("Fitness value of the best solution = ", solution_fitness)
+    print("Index of the best solution : ", solution_idx)
+    solution_ord = solution[:num_cat_cols]
+    solution_comp = solution[num_cat_cols:]
+    solution_str = enc_ordinal.inverse_transform([solution_ord])
+    print("Composition solution: ", solution_comp)
+    print("Categorical solution: ", solution_str)
+    ga_instance.plot_fitness()
+    plt.show()
+
+
+
+
 
 if __name__ == '__main__':
     app.run(main)

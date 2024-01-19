@@ -151,7 +151,7 @@ class DFEncoder:
             + list(self.cols_composition_dict.keys()) \
             + list(self.cols_composition_dict.values()) #+ self.cols_target
         self.ions_list = None
-    
+
     def fit(self, df):
         """Fit the encoder to the data in df using the columns with which the
         encoder was initialized. NOTE: using fit and transform on this encoder
