@@ -72,7 +72,7 @@ def filter_common(df, cols, thresh):
             index_common = indices
         else:
             index_common = index_common & indices
-    return df.iloc[list(index_common)]
+    return df.loc[list(index_common)]
 
 
 class CompositionEncoder:

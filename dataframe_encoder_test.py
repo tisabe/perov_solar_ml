@@ -279,10 +279,10 @@ class UnitTest(unittest.TestCase):
             "b": [3]*5 + [4]*15,
             "c": [1]*20,
             "d": range(20)},
-            index=range(20)
+            index=range(4, 24)
         )
         df_common = filter_common(df, cols=["a", "b", "c"], thresh=0.5)
-        df_expected = df.iloc[5:12]
+        df_expected = df.loc[9:15]
         pd.testing.assert_frame_equal(df_common, df_expected)
 
 

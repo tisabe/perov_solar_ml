@@ -15,7 +15,12 @@ import matplotlib.pyplot as plt
 from dataframe_encoder import (
     DFEncoder,
     aggregate_duplicate_rows,
-    get_value_space
+    get_value_space,
+    filter_singlelayer,
+    filter_valid_ratio,
+    filter_common,
+    filter_compositions,
+    CompositionEncoder_DF
 )
 
 FLAGS = flags.FLAGS
@@ -26,150 +31,90 @@ flags.DEFINE_string(
 
 def main(argv):
     df = pd.read_csv(FLAGS.file, index_col=0, low_memory=False)
-    # define the columns we want to use
-    # columns with lists of categories
-    cols_cat_list = [
-        #"Cell_stack_sequence",
-        "ETL_deposition_procedure",
-        "Substrate_stack_sequence",
-        "ETL_stack_sequence",
-        "Perovskite_deposition_solvents",
-        "HTL_stack_sequence",
-        "HTL_deposition_procedure",
-        "Backcontact_stack_sequence",
-        "Backcontact_deposition_procedure"]
-    # columns with single categories
-    cols_category = [
-        "Cell_architecture",
-        "Perovskite_deposition_procedure",
-        "Perovskite_deposition_aggregation_state_of_reactants"]
-    # columns with lists of numeric values
-    cols_num_list = [
-        "Perovskite_dimension_list_of_layers",
-        "Perovskite_deposition_thermal_annealing_temperature",
-        "Perovskite_deposition_thermal_annealing_time"]
-    # columns that determine the perovskite composition
-    cols_composition = [
-        "Perovskite_composition_a_ions_coefficients",
-        "Perovskite_composition_b_ions_coefficients",
-        "Perovskite_composition_c_ions_coefficients",
-        "Perovskite_composition_a_ions",
-        "Perovskite_composition_b_ions",
-        "Perovskite_composition_c_ions",
-    ]
-    # columns with single numeric values
-    cols_num = ["Cell_area_measured"]
-    # columns with binary values
-    cols_bin = [
-        "Cell_flexible",
-        "Cell_semitransparent",
-        "Perovskite_single_crystal",
-        "Perovskite_dimension_0D",
-        "Perovskite_dimension_2D",
-        "Perovskite_dimension_2D3D_mixture",
-        "Perovskite_dimension_3D",
-        "Perovskite_dimension_3D_with_2D_capping_layer",
-        "Perovskite_deposition_quenching_induced_crystallisation",
-        "Perovskite_deposition_solvent_annealing",
-        "Encapsulation"]
-    cols_all = [
-        *cols_composition,
-        *cols_cat_list,
-        *cols_category,
-        *cols_num_list,
-        *cols_num,
-        *cols_bin]
-
-    cols_targets = ["JV_default_Voc", "JV_default_Jsc", "JV_default_PCE"]
-
-    grouped = df.groupby(
-        list(set(cols_all)),
-        as_index=False)
-    target = "JV_default_PCE"
-    agg_dict = {
-        target: ["mean", "std"],
-        **{col: ["mean", "std"] for col in cols_num},
-        **{col: "first" for col in cols_category},
-        **{col: "first" for col in cols_cat_list},
-        **{col: "first" for col in cols_num_list},
-        **{col: "first" for col in cols_bin},
-        **{col: "first" for col in cols_composition},
-    }
-
-    df_fit = grouped.agg(agg_dict)
-    col_names = ['_'.join(col_name).strip().replace("_mean","").replace("_first","") \
-        for col_name in df_fit.columns.values]
-    df_fit.columns = col_names
-
-    df_fit = df_fit.dropna(subset=target)
-    print("Data shape after aggregation: ", df_fit.shape)
+ 
+    ### filter dataset for composition and convert composition to norm'd ratio
     composition_dict = {
         "Perovskite_composition_a_ions": "Perovskite_composition_a_ions_coefficients",
         "Perovskite_composition_b_ions": "Perovskite_composition_b_ions_coefficients",
         "Perovskite_composition_c_ions": "Perovskite_composition_c_ions_coefficients",
     }
-    encoder = DFEncoder(
-        target,
-        cols_category+cols_cat_list+cols_num_list+cols_bin,
-        composition_dict
-    )
-    df_out = encoder.fit_transform(df_fit, append=False)
-    print("Data shape after encoding: ", df_out.shape)
-    #print(df_out.columns.values)
+    df = df.dropna(
+        subset=list(composition_dict.keys())+list(composition_dict.values()))
+    # filter out multilayer solar cells
+    df = filter_singlelayer(df, list(composition_dict.keys()))
+    df = filter_valid_ratio(df, list(composition_dict.values()))
 
-    cols_composition_new = [col for col in df_out.columns.values \
-        if "Perovskite_composition_" in col]
-    #print(cols_composition_new)
-    print("Composition cols df shape: ", df_out[cols_composition_new].shape)
-    print("Categorical+Numerical df shape (before encoding): ",
-        df_fit[cols_category+cols_cat_list+cols_num_list+cols_bin].shape)
+    print("Nrows before filtering: ", len(df))
+    filter_dict = {
+        "Perovskite_composition_a_ions": ["Cs", "MA", "FA"],
+        "Perovskite_composition_b_ions": ["Pb"],
+        "Perovskite_composition_c_ions": ["I", "Br"],
+    }
+    ions = []
+    for ions_site in filter_dict.values():
+        ions += ions_site
+    df_filtered = filter_compositions(df, filter_dict)
+    print("Nrows after filtering compositions: ", len(df_filtered))
+
+    enc_comp = CompositionEncoder_DF(composition_dict)
+    df_comp = enc_comp.fit_transform(df_filtered, append=True)
+    df_comp = df_comp.dropna(subset=ions)
+    df_comp = df_comp[df_comp["Perovskite_composition_short_form"] != "MAPbI"]
+    print("Nrows after dropping na/MAPbI columns: ", len(df_comp))
+
+    # filter common values in categories
+    cols_category = [
+        "Cell_architecture", "HTL_stack_sequence",
+        "Substrate_stack_sequence", "ETL_stack_sequence",
+        "Backcontact_stack_sequence",]
+    df_common = filter_common(df_comp, cols_category, 0.9)
+    print("Nrows after filtering categorical values: ", len(df_common))
+
+    # encode categories with ordinal numbers
+    enc_ordinal = OrdinalEncoder()
+    X_ord = enc_ordinal.fit_transform(df_common[cols_category])
+    for i, col in enumerate(cols_category):
+        df_common.loc[:, col+"_ordinal"] = X_ord[:, i]
+
+    ### fit random forest model
+    target = "JV_default_PCE"
+    cols_composition = ions
 
     regr = RandomForestRegressor(max_depth=100, random_state=0,
-        max_features='sqrt', oob_score=True, n_jobs=-1)
-    #regr = SVR()
-    X_combined = df_out.to_numpy()
-    y = df_fit[target].to_numpy()
-    cv = KFold(n_splits=5)
+            max_features='sqrt', oob_score=True, n_jobs=-1)
+
+    df_fit = df_common.dropna(subset=target)
+    y = df_fit[target]
+    enc_cat = TargetEncoder()
+    X_cat = enc_cat.fit_transform(df_fit[cols_category], y)
+    X_comp = df_fit[cols_composition].to_numpy()
+    X_combined = np.concatenate([X_cat, X_comp], axis=1)
+
+    cv = KFold(n_splits=5, shuffle=True, random_state=0)
     scores = cross_validate(regr, X=X_combined, y=y, cv=cv,
         scoring=['r2', 'neg_mean_absolute_error'], n_jobs=-1,
         return_estimator=True, error_score='raise')
     print("Scoring attributes: ", scores.keys())
-    print("r^2: ", scores['test_r2'])
-    print("MAE: ", -1*scores['test_neg_mean_absolute_error'])
-    print("Average standard deviation of the target: ",
-        df_fit[target+"_std"].mean())
-
-    y_pred = cross_val_predict(regr, X=X_combined, y=y, cv=cv)
+    print("r^2: ", np.mean(scores['test_r2']), "+-", np.std(scores['test_r2']))
+    maes = -1*scores['test_neg_mean_absolute_error']
+    print("MAE: ", np.mean(maes), "+-", np.std(maes))
 
     # collect the types of different columns to get the gene space
-    cols_type_dict_categories = {
-        **{col: "int" for col in cols_category},
-        **{col: "int" for col in cols_cat_list},
-        **{col: "int" for col in cols_num_list},
-        **{col: "int" for col in cols_bin},
+    cols_ordinal = [col+"_ordinal" for col in cols_category]
+    cols_type_dict = {
+        **{col: "category" for col in cols_ordinal},
+        **{col: "float" for col in cols_composition},
     }
-    enc_ordinal = OrdinalEncoder()
-    X_ordinal = enc_ordinal.fit_transform(
-        df_fit[cols_type_dict_categories.keys()])
-    #print(enc_ordinal.feature_names_in_, len(enc_ordinal.feature_names_in_))
-    df_ordinal_cat = pd.DataFrame(
-        X_ordinal, columns=list(cols_type_dict_categories.keys()))
-    value_space_cat = get_value_space(df_ordinal_cat, cols_type_dict_categories)
-    cols_type_dict_nums = {
-        #**{col: "float" for col in cols_num},
-        **{col: "float" for col in cols_composition_new}}
-    value_space_num = get_value_space(df_out, cols_type_dict_nums)
-    value_space = value_space_cat+value_space_num
-
-    enc_cat = encoder.enc_target
-    num_cat_cols = len(cols_type_dict_categories.keys())
+    value_space = get_value_space(df_fit, cols_type_dict)
+    #print(value_space)
+    num_cat_cols = len(cols_category)
 
     def fitness_func_batch(ga, solution, solution_idx):
         # decompose the solution into composition part and categorical part
         solution_str = enc_ordinal.inverse_transform(
             solution[:, :num_cat_cols])
         solution_str_df = pd.DataFrame(
-            solution_str, columns=cols_type_dict_categories.keys())
+            solution_str, columns=cols_category)
         categorical_vec = enc_cat.transform(solution_str_df)
         composition_vec = solution[:, num_cat_cols:]
 
@@ -199,15 +144,15 @@ def main(argv):
         return (np.mean(y_preds), comp_fitness)
 
     ga_instance = pygad.GA(
-        num_generations=1000,
+        num_generations=100,
         num_parents_mating=20,
         mutation_by_replacement=True,
-        fitness_func=fitness_func_multiobjective,
-        fitness_batch_size=None,
+        fitness_func=fitness_func_batch,
+        fitness_batch_size=20,
         sol_per_pop=50,
         num_genes=len(value_space),
         gene_space=value_space,
-        parent_selection_type='nsga2'
+        #parent_selection_type='nsga2'
     )
     ga_instance.run()
     solution, solution_fitness, solution_idx = ga_instance.best_solution()
@@ -216,8 +161,15 @@ def main(argv):
     solution_ord = solution[:num_cat_cols]
     solution_comp = solution[num_cat_cols:]
     solution_str = enc_ordinal.inverse_transform([solution_ord])
-    print("Composition solution: ", solution_comp)
-    print("Categorical solution: ", solution_str)
+    
+    print("Composition solution: ")
+    solution_comp_dict = {
+        ion: ratio for ion, ratio in zip(cols_composition, solution_comp)}
+    print(solution_comp_dict)
+    print("Categorical solution: ")
+    solution_cat_dict = {
+        col: val for col, val in zip(cols_category, solution_str)}
+    print(solution_cat_dict)
     ga_instance.plot_fitness()
     plt.show()
 
