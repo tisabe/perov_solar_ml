@@ -11,7 +11,11 @@ from dataframe_encoder import (
     CompositionEncoder,
     DFEncoder,
     aggregate_duplicate_rows,
-    get_value_space
+    get_value_space,
+    filter_compositions,
+    filter_singlelayer,
+    CompositionEncoder_DF,
+    filter_common
 )
 
 
@@ -33,36 +37,23 @@ class UnitTest(unittest.TestCase):
         self.assertListEqual(trimmed, expected)
     
     def test_composition_encoder(self):
-        ions_stack_strings = [
-            "a | b | c",
-            "a; b; c",
-            "a | b; c",
-            "a",
-            None,
-            "b"
-        ]
-        ions_stack_ratios = [
-            "8 | 1 | 1",
-            "0.5; 0.1; 0.4",
-            "1 | 0.5; 0.5",
-            "0.5",
-            "1",
-            None
-        ]
-        enc = CompositionEncoder()
-        enc.fit(ions_stack_strings)
-        df_compositions = enc.transform(ions_stack_strings, ions_stack_ratios)
-        compositions_expected = np.array([
-            [0.8, 0.1, 0.1],
-            [0.5, 0.1, 0.4],
-            [0.5, 0.25, 0.25],
-            [1., 0., 0.],
-            [np.nan]*3,
-            [np.nan]*3
-        ])
-        df_compositions_expected = pd.DataFrame(
-            compositions_expected, columns=["a", "b", "c"]
+        df = pd.DataFrame({
+            "target": [1., 2., 1., 2., 3., 4.],
+            "cat0": ["A", "B", "C", "A", "B", "B"],
+            "cat1": ["C", "C", "D", "D", "D", "D"],
+            "comp_a": ["a | b | c", "a; b; c", "a", "a", "a", None],
+            "comp_a_coefficient": ["8 | 1 | 1", "0.5; 0.1; 0.4", "1", "1", None, "1"]},
+            index=([0, 1, 4, 5, 10, 11])
         )
+        enc = CompositionEncoder()
+        enc.fit(df["comp_a"])
+        df_compositions = enc.transform(
+            df["comp_a"], df["comp_a_coefficient"])
+        df_compositions_expected = pd.DataFrame({
+            "a": [.8, .5, 1., 1., None, None],
+            "b": [.1, .1, 0., 0., None, None],
+            "c": [.1, .4, 0., 0., None, None]},
+            index=([0, 1, 4, 5, 10, 11]))
         pd.testing.assert_frame_equal(
             df_compositions, df_compositions_expected)
 
@@ -219,6 +210,80 @@ class UnitTest(unittest.TestCase):
             {'low': 1.0, 'high': 3.0}]
         self.assertListEqual(value_space, value_space_expected)
 
+    def test_filter_compositions(self):
+        df = pd.DataFrame({
+            "comp_a": ["MA", "Cs; FA; MA", "MA", "MA"],
+            "comp_b": ["Pb", "Pb", "Pb | Sn", "Sn; Ti"]})
+        filter_dict = {"comp_a": ["MA"], "comp_b": ["Sn", "Pb"]}
+        df_filtered = filter_compositions(df, filter_dict)
+        df_expected = pd.DataFrame({
+            "comp_a": ["MA", "MA"],
+            "comp_b": ["Pb", "Pb | Sn"]}, index=[0, 2])
+        pd.testing.assert_frame_equal(df_filtered, df_expected)
+
+    def test_filter_singlelayer(self):
+        df = pd.DataFrame({
+            "comp_a": ["MA", "Cs; FA; MA", "MA", "MA"],
+            "comp_b": ["Pb", "Pb", "Pb | Sn", "Sn; Ti"]})
+        cols_comp = ["comp_a", "comp_b"]
+        df_filtered = filter_singlelayer(df, cols_comp)
+        df_expected = pd.DataFrame({
+            "comp_a": ["MA", "Cs; FA; MA", "MA"],
+            "comp_b": ["Pb", "Pb", "Sn; Ti"]}, index=[0, 1, 3])
+        pd.testing.assert_frame_equal(df_filtered, df_expected)
+
+    def test_CompositionEncoder_DF(self):
+        df = pd.DataFrame({
+            "target": [1., None, 1., 2., 3., 4.],
+            "cat0": [None, "B", "C", "A", "B", "B"],
+            "cat1": ["C", "C", "D", "D", "D", "D"],
+            "comp_a": ["a | b | c", "a; b; c", "a", "a", "a", "c"],
+            "comp_a_coefficient": ["8 | 1 | 1", "0.5; 0.1; 0.4", "1", "1", "1", "1"],
+            "comp_b": ["A | B; C", "A", "A", "A", "A", "A"],
+            "comp_b_coefficient": ["1 | 0.5; 0.5", "0.5", "1", "1", "1", "1"]})
+        composition_dict = {
+            "comp_a": "comp_a_coefficient",
+            "comp_b": "comp_b_coefficient"}
+        enc = CompositionEncoder_DF(composition_dict)
+        enc.fit(df)
+        df_comp = enc.transform(df)
+        df_expected = pd.DataFrame({
+            "a": [.8, .5, 1., 1., 1., 0.],
+            "b": [.1, .1, 0., 0., 0., 0.],
+            "c": [.1, .4, 0., 0., 0., 1.],
+            "A": [.5, 1., 1., 1., 1., 1.],
+            "B": [.25, .0, .0, .0, .0, 0.],
+            "C": [.25, .0, .0, .0, .0, 0.],
+        })
+        pd.testing.assert_frame_equal(df_comp, df_expected)
+
+        df_comp = enc.fit_transform(df)
+        pd.testing.assert_frame_equal(df_comp, df_expected)
+
+    def test_CompositionEncoder_DF_raises(self):
+        df = pd.DataFrame({
+            "comp_a": ["a; b", "c"],
+            "comp_a_coefficient": ["0.5; 0.5", "1."],
+            "comp_b": ["A", "c; C"],
+            "comp_b_coefficient": ["1.", "0.5; 0.5"]})
+        composition_dict = {
+            "comp_a": "comp_a_coefficient",
+            "comp_b": "comp_b_coefficient"}
+        enc = CompositionEncoder_DF(composition_dict)
+        with self.assertRaises(ValueError):
+            enc.fit(df)
+
+    def test_filter_common(self):
+        df = pd.DataFrame({
+            "a": [1]*12 + [2]*8,
+            "b": [3]*5 + [4]*15,
+            "c": [1]*20,
+            "d": range(20)},
+            index=range(20)
+        )
+        df_common = filter_common(df, cols=["a", "b", "c"], thresh=0.5)
+        df_expected = df.iloc[5:12]
+        pd.testing.assert_frame_equal(df_common, df_expected)
 
 
 if __name__ == '__main__':

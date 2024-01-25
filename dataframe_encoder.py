@@ -1,4 +1,6 @@
 # Methods for encoding a dataframe as produced from the Perovskite Database
+from functools import partial
+
 import numpy as np
 from sklearn.preprocessing import TargetEncoder
 import pandas as pd
@@ -16,6 +18,7 @@ def trim_ions_string(ions_string):
     # on compositions (denoted by "; ") and layering agnostically
     return ions_string.replace("; ", " ").replace(" | ", " ").split()
 
+
 def trim_ions_ratio(ions_ratio_string):
     # NOTE: some strings might have x as a ratio, we replace this as 1
     temp = ions_ratio_string
@@ -24,12 +27,60 @@ def trim_ions_ratio(ions_ratio_string):
     return [float(coefficient) for coefficient in coefficients]
 
 
+def filter_compositions(df, filter_dict):
+    df_filtered = df.copy()
+    df_filtered[list(filter_dict.keys())] = df_filtered[list(filter_dict.keys())].map(
+        trim_ions_string
+    )
+    def check_condition(ion_list, ions_valid):
+        result = True
+        for ion in ion_list:
+            if not ion in ions_valid:
+                result = False
+        return result
+
+    for comp_col, ions_valid in filter_dict.items():
+        mapfunc = partial(check_condition, ions_valid=ions_valid)
+        df_filtered[comp_col] = df_filtered[comp_col].map(mapfunc)
+
+    return df[df_filtered[list(filter_dict.keys())].apply(all, axis=1)]
+
+
+def filter_singlelayer(df, cols_comp):
+    mask = df[cols_comp].map(lambda x: not "|" in x)
+    return df[mask.apply(all, axis=1)]
+
+
+def filter_valid_ratio(df, cols_ratio):
+    mask = df[cols_ratio].map(lambda x: not "x" in x)
+    return df[mask.apply(all, axis=1)]
+
+
+def filter_common(df, cols, thresh):
+    index_common = {}
+    for col in cols:
+        common_values = []
+        freq_sum = 0
+        count = df[col].value_counts(normalize=True)
+        for freq, value in zip(count.values, count.index):
+            freq_sum += freq
+            common_values.append(value)
+            if freq_sum > thresh:
+                break
+        indices = set(df[df[col].map(lambda x: x in common_values)].index)
+        if not index_common: # check if empty
+            index_common = indices
+        else:
+            index_common = index_common & indices
+    return df.iloc[list(index_common)]
+
+
 class CompositionEncoder:
     def __init__(self):
         self.ions_unique = []
         self.n_categories = None
 
-    def fit(self, ions_stacks):
+    def fit(self, ions_stacks: pd.Series):
         self.ions_unique = []
         for ions_stack in ions_stacks:
             if not isinstance(ions_stack, str):
@@ -42,7 +93,7 @@ class CompositionEncoder:
         if len(self.ions_unique) == 0:
             raise ValueError("No valid ion names found in column.")
 
-    def transform(self, ions_stacks, ions_ratios):
+    def transform(self, ions_stacks: pd.Series, ions_ratios: pd.Series):
         compositions = []
         for ions_stack, ions_ratio in zip(ions_stacks, ions_ratios):
             if not isinstance(ions_stack, str) or not isinstance(ions_ratio, str):
@@ -59,9 +110,44 @@ class CompositionEncoder:
             composition /= np.sum(composition)
             compositions.append(composition)
         df_composition = pd.DataFrame(
-            np.vstack(compositions), columns=self.ions_unique)
-
+            np.vstack(compositions), columns=self.ions_unique,
+            index=ions_stacks.index)
         return df_composition
+
+
+class CompositionEncoder_DF:
+    """Encode multiple composition columns in the same dataframe."""
+    def __init__(self, composition_dict):
+        self.composition_dict = composition_dict
+
+    def fit(self, df):
+        self.comp_encoders = {}
+        self.ions = set()
+        for ion_col, ratio_col in self.composition_dict.items():
+            comp_enc = CompositionEncoder()
+            comp_enc.fit(df[ion_col])
+            if not set(comp_enc.ions_unique).isdisjoint(self.ions):
+                raise ValueError(
+                    f"Following ion names are present in multiple columns:\
+                    {set(comp_enc.ions_unique) & self.ions}")
+            else:
+                self.ions.update(set(comp_enc.ions_unique))
+            self.comp_encoders[ion_col] = comp_enc
+
+    def transform(self, df, append=False):
+        comp_cols = []
+        for ion_col, ratio_col in self.composition_dict.items():
+            comp_cols.append(self.comp_encoders[ion_col].transform(
+                df[ion_col], df[ratio_col]))
+        df_comp = pd.concat(comp_cols, axis=1)
+        if append:
+            return pd.concat([df, df_comp], axis=1)
+        else:
+            return df_comp
+
+    def fit_transform(self, df, append=False):
+        self.fit(df)
+        return self.transform(df, append)
 
 
 def aggregate_duplicate_rows(df, cols_aggregate, cols_mean, dropna=False):
