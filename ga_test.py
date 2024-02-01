@@ -10,6 +10,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import GridSearchCV, KFold, cross_val_predict, cross_validate
 from sklearn.preprocessing import TargetEncoder, OrdinalEncoder
 from sklearn.svm import SVR
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 from dataframe_encoder import (
@@ -20,6 +21,7 @@ from dataframe_encoder import (
     filter_valid_ratio,
     filter_common,
     filter_compositions,
+    filter_unknown,
     CompositionEncoder_DF
 )
 
@@ -62,13 +64,18 @@ def main(argv):
     df_comp = df_comp[df_comp["Perovskite_composition_short_form"] != "MAPbI"]
     print("Nrows after dropping na/MAPbI columns: ", len(df_comp))
 
-    # filter common values in categories
+    # filter out rows where one of the categories is 'Unkown'abs
     cols_category = [
         "Cell_architecture", "HTL_stack_sequence",
         "Substrate_stack_sequence", "ETL_stack_sequence",
         "Backcontact_stack_sequence",]
-    df_common = filter_common(df_comp, cols_category, 0.9)
+    df_known = filter_unknown(df_comp, cols_category)
+    print("Nrows after filtering unkown values: ", len(df_known))
+
+    # filter common values in categories
+    df_common = filter_common(df_known, cols_category, 0.9)
     print("Nrows after filtering categorical values: ", len(df_common))
+
 
     # encode categories with ordinal numbers
     enc_ordinal = OrdinalEncoder()
@@ -85,8 +92,8 @@ def main(argv):
 
     df_fit = df_common.dropna(subset=target)
     y = df_fit[target]
-    enc_cat = TargetEncoder()
-    X_cat = enc_cat.fit_transform(df_fit[cols_category], y)
+    enc_target = TargetEncoder()
+    X_cat = enc_target.fit_transform(df_fit[cols_category], y)
     X_comp = df_fit[cols_composition].to_numpy()
     X_combined = np.concatenate([X_cat, X_comp], axis=1)
 
@@ -98,6 +105,13 @@ def main(argv):
     print("r^2: ", np.mean(scores['test_r2']), "+-", np.std(scores['test_r2']))
     maes = -1*scores['test_neg_mean_absolute_error']
     print("MAE: ", np.mean(maes), "+-", np.std(maes))
+
+    y_pred = cross_val_predict(regr, X=X_combined, y=y, cv=cv)
+    fig, ax = plt.subplots()
+    ax.hist2d(y, y_pred, bins=100, norm=mpl.colors.LogNorm())
+    x_ref = np.linspace(*ax.get_xlim())
+    ax.plot(x_ref, x_ref, '--', alpha=0.7, color='red')
+    plt.savefig("figs/prediction_plot.png", dpi=600)
 
     # collect the types of different columns to get the gene space
     cols_ordinal = [col+"_ordinal" for col in cols_category]
@@ -115,7 +129,7 @@ def main(argv):
             solution[:, :num_cat_cols])
         solution_str_df = pd.DataFrame(
             solution_str, columns=cols_category)
-        categorical_vec = enc_cat.transform(solution_str_df)
+        categorical_vec = enc_target.transform(solution_str_df)
         composition_vec = solution[:, num_cat_cols:]
 
         rf_input = np.concatenate(
@@ -131,7 +145,7 @@ def main(argv):
             [solution[:num_cat_cols]])
         solution_str_df = pd.DataFrame(
             solution_str, columns=cols_type_dict_categories.keys())
-        categorical_vec = enc_cat.transform(solution_str_df)
+        categorical_vec = enc_target.transform(solution_str_df)
         composition_vec = solution[num_cat_cols:]
 
         rf_input = np.concatenate(
@@ -160,7 +174,7 @@ def main(argv):
     print("Index of the best solution : ", solution_idx)
     solution_ord = solution[:num_cat_cols]
     solution_comp = solution[num_cat_cols:]
-    solution_str = enc_ordinal.inverse_transform([solution_ord])
+    solution_str = enc_ordinal.inverse_transform([solution_ord])[0]
     
     print("Composition solution: ")
     solution_comp_dict = {
@@ -170,7 +184,8 @@ def main(argv):
     solution_cat_dict = {
         col: val for col, val in zip(cols_category, solution_str)}
     print(solution_cat_dict)
-    ga_instance.plot_fitness()
+
+    ga_instance.plot_fitness(save_dir='figs/ga_fitness')
     plt.show()
 
 

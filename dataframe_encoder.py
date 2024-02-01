@@ -56,6 +56,11 @@ def filter_valid_ratio(df, cols_ratio):
     return df[mask.apply(all, axis=1)]
 
 
+def filter_unknown(df, cols_cat):
+    mask = df[cols_cat] != "Unkown"
+    return df[mask.apply(all, axis=1)]
+
+
 def filter_common(df, cols, thresh):
     index_common = {}
     for col in cols:
