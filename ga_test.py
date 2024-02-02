@@ -7,15 +7,13 @@ import numpy as np
 import pandas as pd
 import pygad
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import GridSearchCV, KFold, cross_val_predict, cross_validate
-from sklearn.preprocessing import TargetEncoder, OrdinalEncoder
-from sklearn.svm import SVR
+from sklearn.model_selection import KFold, cross_val_predict, cross_validate
+from sklearn.preprocessing import TargetEncoder, OrdinalEncoder, OneHotEncoder
+from sklearn.neural_network import MLPRegressor
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 from dataframe_encoder import (
-    DFEncoder,
-    aggregate_duplicate_rows,
     get_value_space,
     filter_singlelayer,
     filter_valid_ratio,
@@ -32,8 +30,10 @@ flags.DEFINE_string(
 
 
 def main(argv):
+    del argv
+
     df = pd.read_csv(FLAGS.file, index_col=0, low_memory=False)
- 
+
     ### filter dataset for composition and convert composition to norm'd ratio
     composition_dict = {
         "Perovskite_composition_a_ions": "Perovskite_composition_a_ions_coefficients",
@@ -87,32 +87,54 @@ def main(argv):
     target = "JV_default_PCE"
     cols_composition = ions
 
-    regr = RandomForestRegressor(max_depth=100, random_state=0,
-            max_features='sqrt', oob_score=True, n_jobs=-1)
+    model = "rf"
+
+    if model=="rf":
+        regr = RandomForestRegressor(max_depth=100, random_state=0,
+                max_features='sqrt', oob_score=True, n_jobs=-1)
+    else:
+        regr = MLPRegressor(
+            hidden_layer_sizes=(100, 100),
+            solver="adam", # optimizer
+            alpha=0, # L2 regularization term
+            batch_size=256,
+            max_iter=500, # for 'adam' this is number of epochs
+            learning_rate="adaptive",
+            learning_rate_init=1e-3,
+            random_state=42,
+            verbose=False,
+            early_stopping=True
+        )
 
     df_fit = df_common.dropna(subset=target)
-    y = df_fit[target]
-    enc_target = TargetEncoder()
-    X_cat = enc_target.fit_transform(df_fit[cols_category], y)
+    y = df_fit[target].to_numpy()
+    #enc_target = TargetEncoder()
+    enc_target = OneHotEncoder(sparse_output=False)
+    X_cat = enc_target.fit_transform(df_fit[cols_category], y=y)
     X_comp = df_fit[cols_composition].to_numpy()
-    X_combined = np.concatenate([X_cat, X_comp], axis=1)
+    X_combined = np.concatenate((X_cat, X_comp), axis=1)
 
     cv = KFold(n_splits=5, shuffle=True, random_state=0)
-    scores = cross_validate(regr, X=X_combined, y=y, cv=cv,
+    print("Start training...")
+    cv_result = cross_validate(regr, X=X_combined, y=y, cv=cv,
         scoring=['r2', 'neg_mean_absolute_error'], n_jobs=-1,
         return_estimator=True, error_score='raise')
-    print("Scoring attributes: ", scores.keys())
-    print("r^2: ", np.mean(scores['test_r2']), "+-", np.std(scores['test_r2']))
-    maes = -1*scores['test_neg_mean_absolute_error']
+    print("Scoring attributes: ", cv_result.keys())
+    print("r^2: ", np.mean(cv_result['test_r2']), "+-",
+        np.std(cv_result['test_r2']))
+    maes = -1*cv_result['test_neg_mean_absolute_error']
     print("MAE: ", np.mean(maes), "+-", np.std(maes))
 
+    print("Getting predictions...")
     y_pred = cross_val_predict(regr, X=X_combined, y=y, cv=cv)
-    fig, ax = plt.subplots()
+    _, ax = plt.subplots()
     ax.hist2d(y, y_pred, bins=100, norm=mpl.colors.LogNorm())
     x_ref = np.linspace(*ax.get_xlim())
     ax.plot(x_ref, x_ref, '--', alpha=0.7, color='red')
     plt.savefig("figs/prediction_plot.png", dpi=600)
 
+
+    ### Genetic algorithm optimization
     # collect the types of different columns to get the gene space
     cols_ordinal = [col+"_ordinal" for col in cols_category]
     cols_type_dict = {
@@ -125,6 +147,7 @@ def main(argv):
 
     def fitness_func_batch(ga, solution, solution_idx):
         # decompose the solution into composition part and categorical part
+        del ga, solution_idx # parameter from ga instance, but not needed
         solution_str = enc_ordinal.inverse_transform(
             solution[:, :num_cat_cols])
         solution_str_df = pd.DataFrame(
@@ -135,27 +158,29 @@ def main(argv):
         rf_input = np.concatenate(
             (categorical_vec, composition_vec), axis=1)
         # we get k predictions as we used k-fold cross validation earlier
-        y_preds = [estimator.predict(rf_input) for estimator in scores['estimator']]
+        y_preds = [estimator.predict(rf_input) for estimator in cv_result['estimator']]
         #y_preds = cross_val_predict(regr, X=rf_input, cv=cv)
         return np.mean(np.vstack(y_preds), axis=0)
 
     def fitness_func_multiobjective(ga, solution, solution_idx):
         # decompose the solution into composition part and categorical part
+        del ga, solution_idx # parameter from ga instance, but not needed
         solution_str = enc_ordinal.inverse_transform(
             [solution[:num_cat_cols]])
         solution_str_df = pd.DataFrame(
-            solution_str, columns=cols_type_dict_categories.keys())
+            solution_str, columns=cols_category)
         categorical_vec = enc_target.transform(solution_str_df)
         composition_vec = solution[num_cat_cols:]
 
         rf_input = np.concatenate(
             (categorical_vec[0], composition_vec), axis=0)
         # we get k predictions as we used k-fold cross validation earlier
-        y_preds = [estimator.predict([rf_input]) for estimator in scores['estimator']]
+        y_preds = [estimator.predict([rf_input]) for estimator in cv_result['estimator']]
         comp_norm = np.linalg.norm(composition_vec, ord=0)
         #comp_fitness = 1/(comp_norm + 0.000001)
         comp_fitness = -comp_norm
         return (np.mean(y_preds), comp_fitness)
+    del fitness_func_multiobjective # not needed in the current version
 
     ga_instance = pygad.GA(
         num_generations=100,
@@ -175,7 +200,7 @@ def main(argv):
     solution_ord = solution[:num_cat_cols]
     solution_comp = solution[num_cat_cols:]
     solution_str = enc_ordinal.inverse_transform([solution_ord])[0]
-    
+
     print("Composition solution: ")
     solution_comp_dict = {
         ion: ratio for ion, ratio in zip(cols_composition, solution_comp)}
